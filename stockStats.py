@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from pandas_datareader import data as wb
 
@@ -32,15 +33,21 @@ class updateStockData:
 
 
 class portFolioStats:
-    def __init__(self, tickerList=[], weightList=[]):
+    def __init__(self, tickerList=[], weightList=[], startDate='', endDate=''):
         self.csvPath = os.path.join(os.path.dirname(__file__),'csvs')
         self.tickerList = tickerList
         self.weightList = np.array(weightList)
+        self.startDate = startDate
+        self.endDate = endDate
         if len(tickerList) != len(weightList):
             raise ValueError("no. of tickers not matching weights")
         self.closePriceData = pd.DataFrame()
         for tic in tickerList:
             self.closePriceData[tic] = pd.read_csv(os.path.join(self.csvPath, tic.lstrip('^')+'.csv'), index_col=0)['Adj Close']
+
+        # Filter closing price to only for the selected date, by default both are empty, all data in the csv are included.
+        self.closePriceData = self.closePriceData.loc[startDate:endDate]
+
         #print(self.closePriceData.tail())
 
     def getPortfolioRetuns(self):
@@ -77,6 +84,41 @@ class portFolioStats:
         return weightedAnnualVariance
 
 
+    def calcMarcowitzEfficientFrontier(self, dataPoints=1000, to_csv=None):
+        '''
+        This returns a numpy array of size dataPoints contains the expected portfolio returns for a set weights and its
+        standard deviations plotting this with standard deviation in x and portfolio returns in y will give Marcowitz efficient Frontier.
+        :return:
+        '''
+        log_returns = np.log(self.closePriceData/self.closePriceData.shift(1))
+        pfolio_returns = []
+        pfolio_volatilities = []
+        pfolio_weight_list = []
+        pfolio_names = []
+        num_assets = len(self.tickerList)
+        for x in range(dataPoints):
+            weights = np.random.random(num_assets)
+            weights /= np.sum(weights)
+            pfolio_returns.append(np.sum(weights*log_returns.mean())*250)
+            pfolio_volatilities.append(np.sqrt(np.dot(weights.T,np.dot(log_returns.cov()*250,weights))))
+            weights = np.around(weights*100,decimals=2)
+            weights = ':'.join(map(str, list(weights)))
+            pfolio_weight_list.append(weights)
+            pfolio_names.append('pfolio_'+str(x))
+        pfolio_returns = np.array(pfolio_returns)
+        pfolio_volatilities = np.array(pfolio_volatilities)
+        pfolio_weight_list = np.array(pfolio_weight_list)
+        pfolio_names = np.array(pfolio_names)
+        d = np.array([pfolio_names,pfolio_volatilities, pfolio_returns,pfolio_weight_list])
+        if to_csv:
+            df = pd.DataFrame(d).T
+            df.rename(columns={0:'Portfolio Name', 1:'Portfolio Volatility', 2:'PortFolio Returns', 3:'Portfolio WeightList'}, inplace=True)
+            #print(df.info())
+            df.to_csv(to_csv)
+        return d
+
+
+
 
 
 if __name__ == '__main__':
@@ -90,9 +132,13 @@ if __name__ == '__main__':
     #stkUpdater.loadTickerDataToCsv(startDate='2000-01-01',endDate=end_date)
     #stkUpdater = updateStockData(index_list)
     #stkUpdater.loadTickerDataToCsv(startDate='2000-01-01', endDate=end_date)
-    statsObj = portFolioStats(tickerList=ticker_list, weightList=weight_list)
+    statsObj = portFolioStats(tickerList=ticker_list, weightList=weight_list, endDate='2020-03-19')
     statsObj.getPortfolioRetuns()
     statsObj.getPortfolioRisks()
-    statsObj_index = portFolioStats(tickerList=index_list, weightList=[1.0])
-    statsObj_index.getPortfolioRetuns()
-    statsObj_index.getPortfolioRisks()
+    statsObj.calcMarcowitzEfficientFrontier(to_csv='mwef.csv')
+
+
+    #statsObj_index = portFolioStats(tickerList=index_list, weightList=[1.0], endDate='2020-03-19')
+    #statsObj_index.getPortfolioRetuns()
+    #statsObj_index.getPortfolioRisks()
+
