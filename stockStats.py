@@ -36,11 +36,14 @@ class portFolioStats:
     def __init__(self, tickerList=[], weightList=[], startDate='', endDate=''):
         self.csvPath = os.path.join(os.path.dirname(__file__),'csvs')
         self.tickerList = tickerList
-        self.weightList = np.array(weightList)
+        if len(tickerList) != len(weightList):
+            print("no. of tickers not matching weights, making equal weights")
+            self.weightList = np.full(len(tickerList),round(1/len(tickerList),5))
+        else:
+            self.weightList = np.array(weightList)
         self.startDate = startDate
         self.endDate = endDate
-        if len(tickerList) != len(weightList):
-            raise ValueError("no. of tickers not matching weights")
+
         self.closePriceData = pd.DataFrame()
         for tic in tickerList:
             self.closePriceData[tic] = pd.read_csv(os.path.join(self.csvPath, tic.lstrip('^')+'.csv'), index_col=0)['Adj Close']
@@ -49,6 +52,28 @@ class portFolioStats:
         self.closePriceData = self.closePriceData.loc[startDate:endDate]
 
         #print(self.closePriceData.tail())
+
+    def getCAGR(self, since=10, to_csv=None):
+        '''
+
+        :param since: its year from current date. say since 1 yr, since 5 yrs, since 10ys.  1 yr is 250 working days.
+        :return:
+        '''
+        current_price = self.closePriceData.iloc[-1]
+        try:
+            first_price = self.closePriceData.iloc[-since*250]
+        except IndexError as e:
+            raise ValueError("No data available to calculate CAGR for {0} years".format(since))
+        cagr = (current_price/first_price)**(1.0/since)-1
+        # Risk adjusted CAGR
+        daily_returns = (self.closePriceData / self.closePriceData.shift(1)) - 1
+        stddev = (daily_returns.var()*250)**0.5
+        ra_cagr = cagr*(1-stddev)
+        cagr_df = pd.DataFrame({'CAGR':cagr, 'STDDEV':stddev, 'RiskAdj_CAGR':ra_cagr})
+        print(cagr_df)
+        if to_csv:
+            cagr_df.to_csv(to_csv)
+        return cagr_df
 
     def getPortfolioRetuns(self):
         self.daily_returns = (self.closePriceData/self.closePriceData.shift(1))-1
@@ -70,7 +95,6 @@ class portFolioStats:
         self.diversifiableRisk = self.pfolio_var - self.undiversifiableRisk
         print("Diversifiable Risk: {0}".format(str(round(self.diversifiableRisk*100,3))+'%'))
         print("Undiversifiable Risk: {0}".format(str(round(self.undiversifiableRisk * 100, 3)) + '%'))
-
 
     def calcWeightedAnnualVariance(self):
         '''
@@ -104,41 +128,86 @@ class portFolioStats:
             weights = np.around(weights*100,decimals=2)
             weights = ':'.join(map(str, list(weights)))
             pfolio_weight_list.append(weights)
-            pfolio_names.append('pfolio_'+str(x))
+            pfolio_names.append(':'.join(self.tickerList))
         pfolio_returns = np.array(pfolio_returns)
         pfolio_volatilities = np.array(pfolio_volatilities)
         pfolio_weight_list = np.array(pfolio_weight_list)
         pfolio_names = np.array(pfolio_names)
-        d = np.array([pfolio_names,pfolio_volatilities, pfolio_returns,pfolio_weight_list])
+        d = np.array([pfolio_names,pfolio_weight_list, pfolio_volatilities, pfolio_returns])
         if to_csv:
             df = pd.DataFrame(d).T
-            df.rename(columns={0:'Portfolio Name', 1:'Portfolio Volatility', 2:'PortFolio Returns', 3:'Portfolio WeightList'}, inplace=True)
+            df.rename(columns={0:'Portfolio Name', 1:'Portfolio WeightList', 2:'Portfolio Volatility', 3:'PortFolio Returns' }, inplace=True)
             #print(df.info())
             df.to_csv(to_csv)
-        return d
+        return df
 
+class nseStocks:
+    def __init__(self):
+        self.nifty50_csv_path = os.path.join(os.path.dirname(__file__),'inputs','nifty50.csv')
+        self.niftymidcap50_csv_path = os.path.join(os.path.dirname(__file__), 'inputs', 'niftymidcap50.csv')
+        self.nifty50 = pd.read_csv(self.nifty50_csv_path)
+        self.niftymidcap50 = pd.read_csv(self.niftymidcap50_csv_path)
 
+    def getTickers(self, index='nifty50', sectors=[]):
+        stocks = self.nifty50
+        if index == 'niftymidcap50':
+            stocks = self.niftymidcap50
+        # if sectors is empty list, will give all stocks
+        bool_list = []
+        for ind in stocks.Industry:
+            if ind in sectors:
+                bool_list.append(True)
+            else:
+                bool_list.append(False)
+        sectorFilter = pd.Series(bool_list)
+        if len(sectors) == 0:
+            return stocks['Symbol']
+        else:
+            return stocks[sectorFilter]['Symbol']
 
+    def getSectorList(self, index='nifty50'):
+        stocks = self.nifty50
+        if index == 'niftymidcap50':
+            stocks = self.niftymidcap50
+        return pd.Series(list(set(stocks.Industry)))
 
+    def getAllData(self, index='nifty50'):
+        stocks = self.nifty50
+        if index == 'niftymidcap50':
+            stocks = self.niftymidcap50
+        df = stocks[['Symbol','Company Name', 'Industry']]
+        df.set_index('Symbol', inplace=True)
+        return df
 
 if __name__ == '__main__':
     start_date = '2000-01-01'
     end_date = None
 
-    ticker_list = ['TCS', 'INFY']
-    weight_list = [0.5,0.5]
+    #ticker_list = ['INFY', 'BAJFINANCE','BERGEPAINT', 'INDUSINDBK', 'GODREJCP','KAJARIACER','MARICO','MINDTREE','NATCOPHARM','PIDILITIND','SUPREMEIND','VAKRANGEE','ZEEL']
+    #weight_list = [0.14,0.0125,0.1116,0.01286,0.0561,0.0352,0.0866,0.191,0.1087,0.0851,0.009,0.0483,0.1011]
+    ticker_list = ['INFY', 'BAJFINANCE', 'GODREJCP', 'BERGEPAINT', 'NATCOPHARM']
+    weight_list = [0.14,0.0125,0.1116,0.01286,0.0561,0.0866,0.191,0.0851,0.009]
     index_list = ['^NSEI']
     #stkUpdater = updateStockData(ticker_list)
     #stkUpdater.loadTickerDataToCsv(startDate='2000-01-01',endDate=end_date)
     #stkUpdater = updateStockData(index_list)
     #stkUpdater.loadTickerDataToCsv(startDate='2000-01-01', endDate=end_date)
-    statsObj = portFolioStats(tickerList=ticker_list, weightList=weight_list, endDate='2020-03-19')
-    statsObj.getPortfolioRetuns()
-    statsObj.getPortfolioRisks()
-    statsObj.calcMarcowitzEfficientFrontier(to_csv='mwef.csv')
+    #statsObj = portFolioStats(tickerList=ticker_list, weightList=weight_list, startDate='2010-01-01', endDate='2020-03-19')
+    #statsObj.getCAGR(to_csv='outputs/cagr.csv')
+    #statsObj.getPortfolioRetuns()
+    #statsObj.getPortfolioRisks()
+    #statsObj.calcMarcowitzEfficientFrontier(to_csv='mwef_myportfolio.csv', dataPoints=100)
 
 
     #statsObj_index = portFolioStats(tickerList=index_list, weightList=[1.0], endDate='2020-03-19')
     #statsObj_index.getPortfolioRetuns()
     #statsObj_index.getPortfolioRisks()
+
+    nseObj = nseStocks()
+    tickers = nseObj.getTickers(index='niftymidcap50')
+
+    #sector_list = nseObj.getSectorList(index='niftymidcap50')
+    allData = nseObj.getAllData()
+    print(allData)
+
 
